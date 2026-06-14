@@ -1,0 +1,10 @@
+bin/
+obj/
+build/
+dist/
+*.user
+*.suo
+*.pdb
+*.zip
+*.exe
+
