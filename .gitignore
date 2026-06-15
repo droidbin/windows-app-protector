@@ -1,0 +1,10 @@
+build/
+**/bin/
+**/obj/
+.vs/
+TestResults/
+*.user
+*.suo
+*.log
+*.tmp
+*.bak
