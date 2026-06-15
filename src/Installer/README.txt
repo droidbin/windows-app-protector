@@ -1,5 +1,5 @@
 Windows App Protector
-Version: 1.1.1
+Version: 1.1.3
 
 Install:
 1. Extract this zip file.

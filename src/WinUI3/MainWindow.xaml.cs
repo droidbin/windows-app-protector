@@ -8,7 +8,6 @@ using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using Windows.Storage.Pickers;
 using Windows.System;
 using WindowsAppProtector.Models;
 using WindowsAppProtector.Services;
@@ -32,6 +31,11 @@ public sealed class MainWindow : Window
     private const int SwHide = 0;
     private const int SwShow = 5;
     private const int SwRestore = 9;
+    private const int OfnNoChangeDir = 0x00000008;
+    private const int OfnPathMustExist = 0x00000800;
+    private const int OfnFileMustExist = 0x00001000;
+    private const int OfnExplorer = 0x00080000;
+    private const int OfnEnableSizing = 0x00800000;
     private const uint NimAdd = 0x00000000;
     private const uint NimDelete = 0x00000002;
     private const uint NifMessage = 0x00000001;
@@ -249,17 +253,59 @@ public sealed class MainWindow : Window
 
     private async void AddApp_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker
+        try
         {
-            SuggestedStartLocation = PickerLocationId.ComputerFolder,
-            FileTypeFilter = { ".exe" },
-        };
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var path = ShowExecutableOpenDialog();
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                await ViewModel.AddAppAsync(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrashLog(ex);
+            ViewModel.StatusText = $"\uC571\uC744 \uCD94\uAC00\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: {ex.Message}";
+        }
+    }
 
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null)
+    private string? ShowExecutableOpenDialog()
+    {
+        EnsureMainWindowInterop();
+        var buffer = Marshal.AllocCoTaskMem(4096 * sizeof(char));
+
+        try
         {
-            await ViewModel.AddAppAsync(file.Path);
+            var emptyBuffer = new byte[4096 * sizeof(char)];
+            Marshal.Copy(emptyBuffer, 0, buffer, emptyBuffer.Length);
+
+            var dialog = new OpenFileName
+            {
+                lStructSize = Marshal.SizeOf<OpenFileName>(),
+                hwndOwner = hwnd,
+                lpstrFilter = "\uC2E4\uD589 \uD30C\uC77C (*.exe)\0*.exe\0\uBAA8\uB4E0 \uD30C\uC77C (*.*)\0*.*\0",
+                lpstrFile = buffer,
+                nMaxFile = 4096,
+                lpstrTitle = "\uC571 \uCD94\uAC00",
+                lpstrDefExt = "exe",
+                Flags = OfnExplorer | OfnFileMustExist | OfnPathMustExist | OfnNoChangeDir | OfnEnableSizing,
+            };
+
+            if (GetOpenFileName(dialog))
+            {
+                return Marshal.PtrToStringUni(buffer);
+            }
+
+            var error = CommDlgExtendedError();
+            if (error != 0)
+            {
+                throw new InvalidOperationException($"\uD30C\uC77C \uC120\uD0DD \uCC3D \uC624\uB958: 0x{error:X}");
+            }
+
+            return null;
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(buffer);
         }
     }
 
@@ -610,6 +656,7 @@ public sealed class MainWindow : Window
         Process.Start(new ProcessStartInfo
         {
             FileName = installerPath,
+            Arguments = "--update-pid " + Environment.ProcessId,
             UseShellExecute = true,
             Verb = "runas",
         });
@@ -1065,6 +1112,34 @@ public sealed class MainWindow : Window
         public IntPtr hIconSm;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private sealed class OpenFileName
+    {
+        public int lStructSize;
+        public IntPtr hwndOwner;
+        public IntPtr hInstance;
+        public string? lpstrFilter;
+        public string? lpstrCustomFilter;
+        public int nMaxCustFilter;
+        public int nFilterIndex;
+        public IntPtr lpstrFile;
+        public int nMaxFile;
+        public string? lpstrFileTitle;
+        public int nMaxFileTitle;
+        public string? lpstrInitialDir;
+        public string? lpstrTitle;
+        public int Flags;
+        public short nFileOffset;
+        public short nFileExtension;
+        public string? lpstrDefExt;
+        public IntPtr lCustData;
+        public IntPtr lpfnHook;
+        public string? lpTemplateName;
+        public IntPtr pvReserved;
+        public int dwReserved;
+        public int FlagsEx;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
 
@@ -1115,4 +1190,10 @@ public sealed class MainWindow : Window
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetOpenFileName([In, Out] OpenFileName lpofn);
+
+    [DllImport("comdlg32.dll")]
+    private static extern int CommDlgExtendedError();
 }

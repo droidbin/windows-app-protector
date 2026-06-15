@@ -5,26 +5,31 @@ using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Microsoft.Win32;
 
 internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.1";
+    private const string AppVersion = "1.1.3";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
     private const string IfeoRegistryPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
     private const string MarkerName = "WindowsAppProtectorManaged";
+    private const int DialogResultYes = 6;
+    private const uint MessageBoxInformation = 0x00000040;
+    private const uint MessageBoxError = 0x00000010;
+    private const uint MessageBoxQuestionYesNo = 0x00000024;
 
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
             if (!IsAdministrator())
             {
-                RelaunchAsAdmin();
+                RelaunchAsAdmin(args);
                 return 0;
             }
 
@@ -35,8 +40,9 @@ internal static class Setup
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 AppName);
 
-            CleanupOldProcesses();
+            WaitForUpdateSourceProcess(args);
             StopAndDeleteService();
+            CleanupOldProcesses();
             TryCleanupManagedIfeoRules();
             DeleteDirectoryIfExists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsAppProtector"));
             DeleteDirectoryIfExists(installDir);
@@ -51,23 +57,32 @@ internal static class Setup
             File.Delete(zipPath);
 
             string targetPath = Path.Combine(installDir, ExeName);
-            CreateShortcut(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), AppName + ".lnk"),
-                targetPath,
-                installDir);
-            CreateShortcut(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", AppName + ".lnk"),
-                targetPath,
-                installDir);
+            bool createShortcuts = AskCreateShortcuts();
+            if (createShortcuts)
+            {
+                CreateShortcut(
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), AppName + ".lnk"),
+                    targetPath,
+                    installDir);
+                CreateShortcut(
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", AppName + ".lnk"),
+                    targetPath,
+                    installDir);
+            }
+
             WriteUninstaller(installDir);
-            CreateShortcut(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", AppName + " Uninstall.lnk"),
-                Path.Combine(installDir, "Uninstall.bat"),
-                installDir);
+            if (createShortcuts)
+            {
+                CreateShortcut(
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", AppName + " Uninstall.lnk"),
+                    Path.Combine(installDir, "Uninstall.bat"),
+                    installDir);
+            }
+
             TryWriteUninstallRegistry(installDir);
             InstallAndStartService(Path.Combine(installDir, ServiceExeName));
 
-            MessageBoxW(IntPtr.Zero, "\uC124\uCE58\uAC00 \uC644\uB8CC\uB418\uC5C8\uC2B5\uB2C8\uB2E4.", AppName, 0x00000040);
+            MessageBoxW(IntPtr.Zero, "\uC124\uCE58\uAC00 \uC644\uB8CC\uB418\uC5C8\uC2B5\uB2C8\uB2E4.", AppName, MessageBoxInformation);
             Process.Start(new ProcessStartInfo
             {
                 FileName = targetPath,
@@ -78,7 +93,7 @@ internal static class Setup
         }
         catch (Exception ex)
         {
-            MessageBoxW(IntPtr.Zero, "\uC124\uCE58 \uC2E4\uD328:\n" + ex.Message, AppName, 0x00000010);
+            MessageBoxW(IntPtr.Zero, "\uC124\uCE58 \uC2E4\uD328:\n" + ex.Message, AppName, MessageBoxError);
             return 1;
         }
     }
@@ -92,11 +107,12 @@ internal static class Setup
         }
     }
 
-    private static void RelaunchAsAdmin()
+    private static void RelaunchAsAdmin(string[] args)
     {
         Process.Start(new ProcessStartInfo
         {
             FileName = Assembly.GetExecutingAssembly().Location,
+            Arguments = string.Join(" ", args.Select(QuoteArgument)),
             UseShellExecute = true,
             Verb = "runas"
         });
@@ -104,20 +120,88 @@ internal static class Setup
 
     private static void CleanupOldProcesses()
     {
-        foreach (string name in new[] { "WindowsAppProtector.WinUI", "WindowsAppProtector", "WindowsAppProtector-1.6.0" })
+        foreach (string imageName in new[] { ExeName, ServiceExeName, "WindowsAppProtector.exe", "WindowsAppProtector-1.6.0.exe" })
+        {
+            RunHidden("taskkill.exe", "/IM \"" + imageName + "\" /F /T");
+        }
+
+        int currentProcessId = Process.GetCurrentProcess().Id;
+        foreach (string name in new[] { "WindowsAppProtector.WinUI", "WindowsAppProtector.Service", "WindowsAppProtector", "WindowsAppProtector-1.6.0" })
         {
             foreach (var process in Process.GetProcessesByName(name))
             {
                 try
                 {
+                    if (process.Id == currentProcessId)
+                    {
+                        continue;
+                    }
+
                     process.Kill();
-                    process.WaitForExit(3000);
+                    process.WaitForExit(5000);
                 }
                 catch
                 {
                 }
             }
         }
+    }
+
+    private static void WaitForUpdateSourceProcess(string[] args)
+    {
+        int processId = ReadUpdateProcessId(args);
+        if (processId <= 0 || processId == Process.GetCurrentProcess().Id)
+        {
+            return;
+        }
+
+        try
+        {
+            using (var process = Process.GetProcessById(processId))
+            {
+                if (!process.WaitForExit(15000))
+                {
+                    process.Kill();
+                    process.WaitForExit(5000);
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static int ReadUpdateProcessId(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            int parsedValue;
+            if (arg.StartsWith("--update-pid=", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(arg.Substring("--update-pid=".Length), out parsedValue))
+            {
+                return parsedValue;
+            }
+
+            if (string.Equals(arg, "--update-pid", StringComparison.OrdinalIgnoreCase) &&
+                i + 1 < args.Length &&
+                int.TryParse(args[i + 1], out parsedValue))
+            {
+                return parsedValue;
+            }
+        }
+
+        return 0;
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "\"\"";
+        }
+
+        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
 
     private static void InstallAndStartService(string servicePath)
@@ -274,6 +358,17 @@ internal static class Setup
         }
     }
 
+    private static bool AskCreateShortcuts()
+    {
+        int result = MessageBoxW(
+            IntPtr.Zero,
+            "\uBC14\uD0D5\uD654\uBA74 \uBC0F \uC2DC\uC791 \uBA54\uB274 \uBC14\uB85C\uAC00\uAE30\uB97C \uC0DD\uC131\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?",
+            AppName,
+            MessageBoxQuestionYesNo);
+
+        return result == DialogResultYes;
+    }
+
     private static void CreateShortcut(string shortcutPath, string targetPath, string workingDirectory)
     {
         string parent = Path.GetDirectoryName(shortcutPath);
@@ -355,9 +450,31 @@ internal static class Setup
 
     private static void DeleteDirectoryIfExists(string path)
     {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        Exception lastError = null;
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                Directory.Delete(path, true);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                StopAndDeleteService();
+                CleanupOldProcesses();
+                Thread.Sleep(700);
+            }
+        }
+
         if (Directory.Exists(path))
         {
-            Directory.Delete(path, true);
+            throw new IOException("\uC2E4\uD589 \uC911\uC778 \uD504\uB85C\uC138\uC2A4\uB97C \uC885\uB8CC\uD588\uC9C0\uB9CC \uC124\uCE58 \uD3F4\uB354\uB97C \uC0AD\uC81C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. Windows App Protector \uD504\uB85C\uC138\uC2A4\uB97C \uC218\uB3D9\uC73C\uB85C \uC885\uB8CC\uD55C \uB4A4 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC138\uC694.", lastError);
         }
     }
 
