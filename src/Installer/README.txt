@@ -1,5 +1,5 @@
 Windows App Protector
-Version: 1.0.0
+Version: 1.1.1
 
 Install:
 1. Extract this zip file.
@@ -13,3 +13,4 @@ Uninstall:
 Notes:
 - Setup.exe must be run with administrator permission because the app installs a Windows Service and app launch blocking rules.
 - Keep Setup.exe and Uninstall.bat together when sharing this package.
+- Automatic updates use the latest GitHub Release from droidbin/windows-app-protector.

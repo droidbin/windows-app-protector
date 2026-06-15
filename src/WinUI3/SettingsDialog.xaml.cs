@@ -24,12 +24,6 @@ public sealed class SettingsWindow : Window
         OnContent = "\uCF1C\uC9D0",
         OffContent = "\uAEBC\uC9D0",
     };
-    private readonly TextBox authCacheMinutesBox = new()
-    {
-        Header = "\uAD00\uB9AC\uC790 \uC778\uC99D \uC720\uC9C0 \uC2DC\uAC04(\uBD84)",
-        Width = 240,
-        InputScope = NumberInputScope(),
-    };
     private readonly TextBlock summaryText = new()
     {
         TextWrapping = TextWrapping.Wrap,
@@ -123,15 +117,6 @@ public sealed class SettingsWindow : Window
         });
         panel.Children.Add(closeToBackgroundSwitch);
 
-        var numberPanel = new Grid
-        {
-            ColumnSpacing = 16,
-        };
-        numberPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(authCacheMinutesBox, 0);
-        numberPanel.Children.Add(authCacheMinutesBox);
-        panel.Children.Add(numberPanel);
-
         section.Child = panel;
         return section;
     }
@@ -162,7 +147,6 @@ public sealed class SettingsWindow : Window
     private void LoadPreferenceValues()
     {
         closeToBackgroundSwitch.IsOn = ViewModel.CloseToBackground;
-        authCacheMinutesBox.Text = ViewModel.AuthCacheMinutes.ToString();
     }
 
     private void BuildHotkeyRows()
@@ -277,21 +261,9 @@ public sealed class SettingsWindow : Window
         RefreshHotkeyRows();
         if (ViewModel.CanSaveHotkeys)
         {
-            await ViewModel.SavePreferencesAsync(
-                closeToBackgroundSwitch.IsOn,
-                CoerceMinutesText(authCacheMinutesBox.Text, ViewModel.AuthCacheMinutes));
+            await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn);
             Close();
         }
-    }
-
-    private static int CoerceMinutesText(string text, int fallback)
-    {
-        if (!int.TryParse(text, out var value))
-        {
-            return fallback;
-        }
-
-        return Math.Clamp(value, 1, 240);
     }
 
     public void ResizeWindow(int width, int height)
@@ -318,10 +290,4 @@ public sealed class SettingsWindow : Window
         return new SolidColorBrush(Windows.UI.Color.FromArgb(255, r, g, b));
     }
 
-    private static InputScope NumberInputScope()
-    {
-        var scope = new InputScope();
-        scope.Names.Add(new InputScopeName(InputScopeNameValue.Number));
-        return scope;
-    }
 }

@@ -11,7 +11,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.0.0";
+    private const string AppVersion = "1.1.1";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
@@ -178,8 +178,9 @@ internal static class Setup
                 "  \"ProtectionEnabled\": false,\r\n" +
                 "  \"CloseToBackground\": true,\r\n" +
                 "  \"UnlockMinutes\": 10,\r\n" +
-                "  \"AuthCacheMinutes\": 10,\r\n" +
                 "  \"UnlockUntil\": null,\r\n" +
+                "  \"AppPinSalt\": \"\",\r\n" +
+                "  \"AppPinHash\": \"\",\r\n" +
                 "  \"GlobalHotkeys\": {},\r\n" +
                 "  \"ProtectedApps\": []\r\n" +
                 "}\r\n",

@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Windows.Storage.Pickers;
 using Windows.System;
@@ -43,11 +44,14 @@ public sealed class MainWindow : Window
     private readonly ListView appList = new() { SelectionMode = ListViewSelectionMode.Single };
     private readonly Dictionary<int, string> registeredHotkeys = new();
     private readonly HashSet<IntPtr> hiddenProtectedWindows = new();
+    private readonly GitHubUpdateService updateService = new();
     private readonly DispatcherTimer windowGuardTimer = new() { Interval = TimeSpan.FromMilliseconds(700) };
     private readonly WndProcDelegate messageWndProcDelegate;
     private readonly IntPtr messageWindowHandle;
     private bool isClosing;
     private bool isExitRequested;
+    private bool isAuthenticating;
+    private bool isCheckingForUpdates;
     private bool trayIconAdded;
     private IntPtr hwnd;
     private AppWindow? appWindow;
@@ -79,6 +83,13 @@ public sealed class MainWindow : Window
     {
         await ViewModel.InitializeAsync();
         RegisterConfiguredHotkeys();
+        if (!await EnsureWindowAccessAsync(isInitialLaunch: true))
+        {
+            ExitApplication();
+            return;
+        }
+
+        _ = CheckForUpdatesAsync(showNoUpdateMessage: false);
     }
 
     private FrameworkElement BuildContent()
@@ -111,10 +122,14 @@ public sealed class MainWindow : Window
         var settingsButton = new AppBarButton { Label = "\uC124\uC815" };
         settingsButton.Click += Settings_Click;
 
+        var updateButton = new AppBarButton { Label = "\uC5C5\uB370\uC774\uD2B8 \uD655\uC778" };
+        updateButton.Click += CheckUpdate_Click;
+
         var exitButton = new AppBarButton { Label = "\uC885\uB8CC" };
         exitButton.Click += (_, _) => ExitApplication();
 
         commandBar.PrimaryCommands.Add(settingsButton);
+        commandBar.SecondaryCommands.Add(updateButton);
         commandBar.SecondaryCommands.Add(exitButton);
         commandBarHost.Child = commandBar;
         Grid.SetRow(commandBarHost, 0);
@@ -225,6 +240,11 @@ public sealed class MainWindow : Window
             settingsWindow = null;
             ViewModel.StatusText = $"\uC124\uC815 \uCC3D\uC744 \uC5F4 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: {ex.Message}";
         }
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckForUpdatesAsync(showNoUpdateMessage: true);
     }
 
     private async void AddApp_Click(object sender, RoutedEventArgs e)
@@ -358,7 +378,7 @@ public sealed class MainWindow : Window
     {
         if (message == WmTrayIcon && (lParam.ToInt32() == WmLButtonDblClk || lParam.ToInt32() == WmRButtonUp))
         {
-            ShowMainWindow();
+            _ = ShowMainWindowAsync();
             return IntPtr.Zero;
         }
 
@@ -376,7 +396,7 @@ public sealed class MainWindow : Window
         switch (actionKey)
         {
             case "show-window":
-                ToggleWindowVisibility();
+                await ToggleWindowVisibilityAsync();
                 break;
             case "lock-all":
                 await ViewModel.SetListedAppsEnabledAsync(true);
@@ -505,6 +525,123 @@ public sealed class MainWindow : Window
         Close();
     }
 
+    private async Task CheckForUpdatesAsync(bool showNoUpdateMessage)
+    {
+        if (isCheckingForUpdates)
+        {
+            return;
+        }
+
+        isCheckingForUpdates = true;
+        try
+        {
+            if (showNoUpdateMessage)
+            {
+                ViewModel.StatusText = "\uC5C5\uB370\uC774\uD2B8\uB97C \uD655\uC778\uD558\uB294 \uC911\uC785\uB2C8\uB2E4.";
+            }
+
+            var result = await updateService.CheckForUpdateAsync();
+            if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
+            {
+                if (showNoUpdateMessage)
+                {
+                    await ShowMessageDialogAsync("\uC5C5\uB370\uC774\uD2B8 \uD655\uC778 \uC2E4\uD328", result.ErrorMessage);
+                }
+
+                return;
+            }
+
+            if (!result.IsUpdateAvailable || result.Release is null)
+            {
+                if (showNoUpdateMessage)
+                {
+                    await ShowMessageDialogAsync(
+                        "\uC5C5\uB370\uC774\uD2B8",
+                        $"\uD604\uC7AC \uCD5C\uC2E0 \uBC84\uC804\uC785\uB2C8\uB2E4. ({GetCurrentVersionText()})");
+                }
+
+                return;
+            }
+
+            await PromptAndInstallUpdateAsync(result.Release);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrashLog(ex);
+            if (showNoUpdateMessage)
+            {
+                await ShowMessageDialogAsync("\uC5C5\uB370\uC774\uD2B8 \uD655\uC778 \uC2E4\uD328", ex.Message);
+            }
+        }
+        finally
+        {
+            isCheckingForUpdates = false;
+        }
+    }
+
+    private async Task PromptAndInstallUpdateAsync(GitHubReleaseInfo release)
+    {
+        var releaseName = string.IsNullOrWhiteSpace(release.ReleaseName)
+            ? release.TagName
+            : release.ReleaseName;
+        var dialog = new ContentDialog
+        {
+            Title = "\uC0C8 \uC5C5\uB370\uC774\uD2B8",
+            Content = new TextBlock
+            {
+                Text = $"현재 버전: {GetCurrentVersionText()}\n최신 버전: {release.LatestVersion}\n\n{releaseName}을 설치하시겠습니까?",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "\uC124\uCE58",
+            CloseButtonText = "\uB098\uC911\uC5D0",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        ViewModel.StatusText = "\uC5C5\uB370\uC774\uD2B8\uB97C \uB2E4\uC6B4\uB85C\uB4DC\uD558\uB294 \uC911\uC785\uB2C8\uB2E4.";
+        var installerPath = await updateService.DownloadInstallerAsync(release);
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = installerPath,
+            UseShellExecute = true,
+            Verb = "runas",
+        });
+
+        ExitApplication();
+    }
+
+    private async Task ShowMessageDialogAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+            },
+            CloseButtonText = "\uD655\uC778",
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    private static string GetCurrentVersionText()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        return version is null
+            ? "0.0.0"
+            : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
+    }
+
     private void HideToTray()
     {
         EnsureMainWindowInterop();
@@ -512,15 +649,19 @@ public sealed class MainWindow : Window
         ViewModel.StatusText = "\uBC31\uADF8\uB77C\uC6B4\uB4DC\uC5D0\uC11C \uC2E4\uD589 \uC911\uC785\uB2C8\uB2E4. \uC228\uACA8\uC9C4 \uC544\uC774\uCF58\uC5D0\uC11C \uB2E4\uC2DC \uC5F4 \uC218 \uC788\uC2B5\uB2C8\uB2E4.";
     }
 
-    private void ShowMainWindow()
+    private async Task ShowMainWindowAsync()
     {
         EnsureMainWindowInterop();
         ShowWindow(hwnd, SwShow);
         ShowWindow(hwnd, SwRestore);
         Activate();
+        if (!await EnsureWindowAccessAsync(isInitialLaunch: false))
+        {
+            HideToTray();
+        }
     }
 
-    private void ToggleWindowVisibility()
+    private async Task ToggleWindowVisibilityAsync()
     {
         EnsureMainWindowInterop();
         if (IsWindowVisible(hwnd))
@@ -529,7 +670,166 @@ public sealed class MainWindow : Window
             return;
         }
 
-        ShowMainWindow();
+        await ShowMainWindowAsync();
+    }
+
+    private async Task<bool> EnsureWindowAccessAsync(bool isInitialLaunch)
+    {
+        if (isAuthenticating)
+        {
+            return false;
+        }
+
+        isAuthenticating = true;
+        try
+        {
+            EnsureMainWindowInterop();
+            ShowWindow(hwnd, SwShow);
+            ShowWindow(hwnd, SwRestore);
+            Activate();
+
+            if (!ViewModel.HasAppPin)
+            {
+                return await ShowCreatePinDialogAsync();
+            }
+
+            return await ShowVerifyPinDialogAsync(isInitialLaunch);
+        }
+        finally
+        {
+            isAuthenticating = false;
+        }
+    }
+
+    private async Task<bool> ShowCreatePinDialogAsync()
+    {
+        var errorText = string.Empty;
+
+        while (true)
+        {
+            var pinBox = new PasswordBox
+            {
+                Header = "\uC0C8 PIN",
+                PlaceholderText = "4\uC790\uB9AC \uC774\uC0C1",
+                MaxLength = 32,
+            };
+            var confirmBox = new PasswordBox
+            {
+                Header = "PIN \uD655\uC778",
+                PlaceholderText = "\uB2E4\uC2DC \uC785\uB825",
+                MaxLength = 32,
+            };
+            var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "\uC571 \uC2E4\uD589 \uBC0F \uBC31\uADF8\uB77C\uC6B4\uB4DC\uC5D0\uC11C \uB2E4\uC2DC \uC5F4 \uB54C \uC0AC\uC6A9\uD560 PIN\uC744 \uC124\uC815\uD558\uC138\uC694.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brush(0x4C, 0x57, 0x66),
+            });
+            if (!string.IsNullOrWhiteSpace(errorText))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = errorText,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Brush(0xA5, 0x21, 0x2B),
+                });
+            }
+            panel.Children.Add(pinBox);
+            panel.Children.Add(confirmBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "PIN \uC124\uC815",
+                Content = panel,
+                PrimaryButtonText = "\uC124\uC815",
+                CloseButtonText = "\uC885\uB8CC",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return false;
+            }
+
+            if (pinBox.Password.Length < 4)
+            {
+                errorText = "PIN\uC740 4\uC790\uB9AC \uC774\uC0C1\uC73C\uB85C \uC124\uC815\uD558\uC138\uC694.";
+                ViewModel.StatusText = errorText;
+                continue;
+            }
+
+            if (!string.Equals(pinBox.Password, confirmBox.Password, StringComparison.Ordinal))
+            {
+                errorText = "PIN \uD655\uC778\uC774 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.";
+                ViewModel.StatusText = errorText;
+                continue;
+            }
+
+            await ViewModel.SetAppPinAsync(pinBox.Password);
+            ViewModel.StatusText = "PIN\uC774 \uC124\uC815\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
+            return true;
+        }
+    }
+
+    private async Task<bool> ShowVerifyPinDialogAsync(bool isInitialLaunch)
+    {
+        var errorText = string.Empty;
+
+        while (true)
+        {
+            var pinBox = new PasswordBox
+            {
+                Header = "PIN",
+                PlaceholderText = "PIN \uC785\uB825",
+                MaxLength = 32,
+            };
+            var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = isInitialLaunch
+                    ? "\uC571\uC744 \uC5F4\uB824\uBA74 PIN\uC744 \uC785\uB825\uD558\uC138\uC694."
+                    : "\uBC31\uADF8\uB77C\uC6B4\uB4DC\uC5D0\uC11C \uB2E4\uC2DC \uC5F4\uB824\uBA74 PIN\uC744 \uC785\uB825\uD558\uC138\uC694.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brush(0x4C, 0x57, 0x66),
+            });
+            if (!string.IsNullOrWhiteSpace(errorText))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = errorText,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Brush(0xA5, 0x21, 0x2B),
+                });
+            }
+            panel.Children.Add(pinBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "\uC778\uC99D",
+                Content = panel,
+                PrimaryButtonText = "\uD655\uC778",
+                CloseButtonText = isInitialLaunch ? "\uC885\uB8CC" : "\uB2EB\uAE30",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = ((FrameworkElement)Content).XamlRoot,
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return false;
+            }
+
+            if (ViewModel.VerifyAppPin(pinBox.Password))
+            {
+                return true;
+            }
+
+            errorText = "PIN\uC774 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.";
+            ViewModel.StatusText = errorText;
+        }
     }
 
     private void WindowGuardTimer_Tick(object? sender, object e)

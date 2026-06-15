@@ -85,21 +85,11 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    public int AuthCacheMinutes
-    {
-        get => config.AuthCacheMinutes;
-        set
-        {
-            var clamped = Math.Clamp(value, 1, 240);
-            if (config.AuthCacheMinutes != clamped)
-            {
-                config.AuthCacheMinutes = clamped;
-                OnPropertyChanged();
-            }
-        }
-    }
-
     public ObservableCollection<ProtectedAppViewModel> Apps { get; } = new();
+
+    public bool HasAppPin =>
+        !string.IsNullOrWhiteSpace(config.AppPinSalt) &&
+        !string.IsNullOrWhiteSpace(config.AppPinHash);
 
     public ObservableCollection<HotkeySettingViewModel> Hotkeys { get; } = new()
     {
@@ -127,10 +117,8 @@ public class MainViewModel : ObservableObject
         var loaded = await settingsStore.LoadAsync();
         config.ProtectionEnabled = loaded.ProtectionEnabled;
         config.CloseToBackground = loaded.CloseToBackground;
-        config.AuthCacheMinutes = loaded.AuthCacheMinutes;
         config.UnlockUntil = null;
         OnPropertyChanged(nameof(CloseToBackground));
-        OnPropertyChanged(nameof(AuthCacheMinutes));
         if (loaded.GlobalHotkeys.Count > 0)
         {
             foreach (var hotkey in loaded.GlobalHotkeys)
@@ -330,12 +318,24 @@ public class MainViewModel : ObservableObject
             : $"\uBAA9\uB85D \uC7A0\uAE08 \uD574\uC81C: {config.ProtectedApps.Count}\uAC1C";
     }
 
-    public async Task SavePreferencesAsync(bool closeToBackground, int authCacheMinutes)
+    public async Task SavePreferencesAsync(bool closeToBackground)
     {
         CloseToBackground = closeToBackground;
-        AuthCacheMinutes = authCacheMinutes;
         await SaveAsync();
         StatusText = "\uC124\uC815\uC774 \uC800\uC7A5\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
+    }
+
+    public async Task SetAppPinAsync(string pin)
+    {
+        var hash = PinHasher.CreateHash(pin);
+        config.AppPinSalt = hash.Salt;
+        config.AppPinHash = hash.Hash;
+        await SaveAsync();
+    }
+
+    public bool VerifyAppPin(string pin)
+    {
+        return PinHasher.Verify(pin, config.AppPinSalt, config.AppPinHash);
     }
 
     public async void SetHotkey(string actionKey, string hotkeyText)
@@ -445,8 +445,6 @@ public class MainViewModel : ObservableObject
                 Identity = GetAppIdentity(app),
                 Path = GetDisplayPath(app),
                 Status = app.Enabled ? "\uC7A0\uAE08" : "\uD574\uC81C",
-                BlockedCount = app.BlockedCount,
-                LastBlockedAt = string.IsNullOrWhiteSpace(app.LastBlockedAt) ? "-" : app.LastBlockedAt,
             });
         }
     }

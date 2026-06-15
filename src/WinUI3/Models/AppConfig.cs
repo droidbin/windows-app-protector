@@ -5,8 +5,9 @@ public sealed class AppConfig
     public bool ProtectionEnabled { get; set; }
     public bool CloseToBackground { get; set; } = true;
     public int UnlockMinutes { get; set; } = 10;
-    public int AuthCacheMinutes { get; set; } = 10;
     public string? UnlockUntil { get; set; }
+    public string AppPinSalt { get; set; } = string.Empty;
+    public string AppPinHash { get; set; } = string.Empty;
     public Dictionary<string, string> GlobalHotkeys { get; set; } = new()
     {
         ["show-window"] = "Ctrl+Alt+W",
