@@ -85,6 +85,19 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    public bool StartWithWindows
+    {
+        get => config.StartWithWindows;
+        set
+        {
+            if (config.StartWithWindows != value)
+            {
+                config.StartWithWindows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     public ObservableCollection<ProtectedAppViewModel> Apps { get; } = new();
 
     public bool HasAppPin =>
@@ -117,8 +130,10 @@ public class MainViewModel : ObservableObject
         var loaded = await settingsStore.LoadAsync();
         config.ProtectionEnabled = loaded.ProtectionEnabled;
         config.CloseToBackground = loaded.CloseToBackground;
+        config.StartWithWindows = loaded.StartWithWindows;
         config.UnlockUntil = null;
         OnPropertyChanged(nameof(CloseToBackground));
+        OnPropertyChanged(nameof(StartWithWindows));
         if (loaded.GlobalHotkeys.Count > 0)
         {
             foreach (var hotkey in loaded.GlobalHotkeys)
@@ -140,6 +155,7 @@ public class MainViewModel : ObservableObject
         ProtectionEnabled = LockRulesActive();
         RefreshApps();
         ValidateHotkeys();
+        SyncStartupPreference();
         await SyncProtectionRulesAsync();
         await SaveAsync();
         UpdateStatus();
@@ -318,11 +334,22 @@ public class MainViewModel : ObservableObject
             : $"\uBAA9\uB85D \uC7A0\uAE08 \uD574\uC81C: {config.ProtectedApps.Count}\uAC1C";
     }
 
-    public async Task SavePreferencesAsync(bool closeToBackground)
+    public async Task<bool> SavePreferencesAsync(bool closeToBackground, bool startWithWindows)
     {
-        CloseToBackground = closeToBackground;
-        await SaveAsync();
-        StatusText = "\uC124\uC815\uC774 \uC800\uC7A5\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
+        try
+        {
+            StartupService.SetEnabled(startWithWindows);
+            CloseToBackground = closeToBackground;
+            StartWithWindows = startWithWindows;
+            await SaveAsync();
+            StatusText = "\uC124\uC815\uC774 \uC800\uC7A5\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"\uC2DC\uC791\uD504\uB85C\uADF8\uB7A8 \uC124\uC815\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: {ex.Message}";
+            return false;
+        }
     }
 
     public async Task SetAppPinAsync(string pin)
@@ -420,6 +447,17 @@ public class MainViewModel : ObservableObject
         config.UnlockUntil = null;
         config.GlobalHotkeys = Hotkeys.ToDictionary(item => item.ActionKey, item => item.HotkeyText);
         await settingsStore.SaveAsync(config);
+    }
+
+    private void SyncStartupPreference()
+    {
+        try
+        {
+            StartupService.SetEnabled(config.StartWithWindows);
+        }
+        catch
+        {
+        }
     }
 
     private void RefreshApps()

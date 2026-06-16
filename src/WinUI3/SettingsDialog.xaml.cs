@@ -24,6 +24,12 @@ public sealed class SettingsWindow : Window
         OnContent = "\uCF1C\uC9D0",
         OffContent = "\uAEBC\uC9D0",
     };
+    private readonly ToggleSwitch startWithWindowsSwitch = new()
+    {
+        Header = "Windows \uC2DC\uC791 \uC2DC \uC790\uB3D9 \uC2E4\uD589",
+        OnContent = "\uCF1C\uC9D0",
+        OffContent = "\uAEBC\uC9D0",
+    };
     private readonly TextBlock summaryText = new()
     {
         TextWrapping = TextWrapping.Wrap,
@@ -116,6 +122,7 @@ public sealed class SettingsWindow : Window
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         panel.Children.Add(closeToBackgroundSwitch);
+        panel.Children.Add(startWithWindowsSwitch);
 
         section.Child = panel;
         return section;
@@ -147,6 +154,7 @@ public sealed class SettingsWindow : Window
     private void LoadPreferenceValues()
     {
         closeToBackgroundSwitch.IsOn = ViewModel.CloseToBackground;
+        startWithWindowsSwitch.IsOn = ViewModel.StartWithWindows;
     }
 
     private void BuildHotkeyRows()
@@ -261,8 +269,10 @@ public sealed class SettingsWindow : Window
         RefreshHotkeyRows();
         if (ViewModel.CanSaveHotkeys)
         {
-            await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn);
-            Close();
+            if (await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn, startWithWindowsSwitch.IsOn))
+            {
+                Close();
+            }
         }
     }
 

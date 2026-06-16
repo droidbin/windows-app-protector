@@ -2,7 +2,7 @@
 
 WinUI 3 기반 Windows 앱 실행 차단 도구입니다. 보호 목록에 등록한 `.exe` 파일을 Windows IFEO(Image File Execution Options) 규칙으로 차단합니다.
 
-현재 배포 버전: `1.1.3`
+현재 배포 버전: `1.1.4`
 
 ## 배포 파일
 
@@ -40,7 +40,7 @@ dist\installer\Setup.exe
 
 자동 업데이트는 GitHub Releases의 최신 릴리즈를 기준으로 동작합니다.
 
-- 릴리즈 태그는 `v1.1.3`처럼 앱 버전과 맞춥니다.
+- 릴리즈 태그는 `v1.1.4`처럼 앱 버전과 맞춥니다.
 - 릴리즈 자산에는 `Setup.exe`를 첨부하는 것을 권장합니다.
 - `Setup.exe`가 없으면 `WindowsAppProtector.zip` 안의 `Setup.exe`를 찾아 설치합니다.
 - private 저장소를 사용할 경우 `WINDOWS_APP_PROTECTOR_GITHUB_TOKEN` 환경 변수 또는 `%PROGRAMDATA%\Windows App Protector\github-token.txt`에 GitHub 토큰을 넣어야 합니다.
@@ -51,6 +51,7 @@ dist\installer\Setup.exe
 - 선택 앱 잠금/해제
 - 목록 잠금/해제
 - 앱 최초 실행 및 백그라운드 복귀 시 PIN 인증
+- Windows 시작 시 자동 실행 ON/OFF
 - GitHub Releases 기반 자동 업데이트
 - 전역 단축키 등록 및 설정
 - 중복 단축키 감지
