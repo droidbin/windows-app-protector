@@ -30,14 +30,10 @@ public sealed class SettingsWindow : Window
         OnContent = "\uCF1C\uC9D0",
         OffContent = "\uAEBC\uC9D0",
     };
-    private readonly NumberBox idleLockMinutesBox = new()
+    private readonly TextBox idleLockMinutesBox = new()
     {
         Header = "\uC720\uD734 \uC2DC \uC790\uB3D9 \uC7A0\uAE08(\uBD84)",
-        Minimum = 0,
-        Maximum = 1440,
-        SmallChange = 1,
-        LargeChange = 5,
-        SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+        PlaceholderText = "10",
         Width = 220,
     };
     private readonly TextBlock summaryText = new()
@@ -173,7 +169,7 @@ public sealed class SettingsWindow : Window
     {
         closeToBackgroundSwitch.IsOn = ViewModel.CloseToBackground;
         startWithWindowsSwitch.IsOn = ViewModel.StartWithWindows;
-        idleLockMinutesBox.Value = ViewModel.IdleLockMinutes;
+        idleLockMinutesBox.Text = ViewModel.IdleLockMinutes.ToString();
     }
 
     private void BuildHotkeyRows()
@@ -288,9 +284,9 @@ public sealed class SettingsWindow : Window
         RefreshHotkeyRows();
         if (ViewModel.CanSaveHotkeys)
         {
-            var idleLockMinutes = double.IsNaN(idleLockMinutesBox.Value)
-                ? ViewModel.IdleLockMinutes
-                : (int)Math.Round(idleLockMinutesBox.Value);
+            var idleLockMinutes = int.TryParse(idleLockMinutesBox.Text, out var parsedIdleLockMinutes)
+                ? parsedIdleLockMinutes
+                : ViewModel.IdleLockMinutes;
 
             if (await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn, startWithWindowsSwitch.IsOn, idleLockMinutes))
             {
