@@ -663,7 +663,7 @@ public sealed class MainWindow : Window
         Process.Start(new ProcessStartInfo
         {
             FileName = installerPath,
-            Arguments = "--update-pid " + Environment.ProcessId,
+            Arguments = "--update-pid " + Environment.ProcessId + " --install-dir " + QuoteArgument(AppContext.BaseDirectory),
             UseShellExecute = true,
             Verb = "runas",
         });
@@ -694,6 +694,11 @@ public sealed class MainWindow : Window
         return version is null
             ? "0.0.0"
             : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace("\"", "\\\"") + "\"";
     }
 
     private void HideToTray()

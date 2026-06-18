@@ -12,7 +12,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.6";
+    private const string AppVersion = "1.1.7";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
@@ -33,9 +33,8 @@ internal static class Setup
                 return 0;
             }
 
-            string installDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                AppName);
+            string programFilesDir = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string installDir = ResolveInstallDirectory(args, programFilesDir);
             string dataDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 AppName);
@@ -45,7 +44,16 @@ internal static class Setup
             CleanupOldProcesses();
             TryCleanupManagedIfeoRules();
             DeleteDirectoryIfExists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsAppProtector"));
-            string oldInstallDir = MoveInstallDirectoryAside(installDir);
+            string oldInstallDir;
+            if (!TryMoveInstallDirectoryAside(installDir, out oldInstallDir))
+            {
+                installDir = Path.Combine(programFilesDir, AppName + " " + AppVersion);
+                if (!TryMoveInstallDirectoryAside(installDir, out oldInstallDir))
+                {
+                    throw new IOException("설치 폴더를 준비할 수 없습니다. Windows App Protector 프로세스를 종료한 뒤 다시 실행하세요.");
+                }
+            }
+
             Directory.CreateDirectory(installDir);
             Directory.CreateDirectory(dataDir);
             GrantUsersModify(dataDir);
@@ -193,6 +201,35 @@ internal static class Setup
         }
 
         return 0;
+    }
+
+    private static string ResolveInstallDirectory(string[] args, string programFilesDir)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--install-dir=", StringComparison.OrdinalIgnoreCase))
+            {
+                return NormalizeInstallDirectory(arg.Substring("--install-dir=".Length), programFilesDir);
+            }
+
+            if (string.Equals(arg, "--install-dir", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                return NormalizeInstallDirectory(args[i + 1], programFilesDir);
+            }
+        }
+
+        return Path.Combine(programFilesDir, AppName);
+    }
+
+    private static string NormalizeInstallDirectory(string value, string programFilesDir)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Path.Combine(programFilesDir, AppName);
+        }
+
+        return Path.GetFullPath(value.Trim().Trim('"'));
     }
 
     private static string QuoteArgument(string value)
@@ -419,8 +456,7 @@ internal static class Setup
             "del \"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows App Protector.lnk\" >nul 2>&1\r\n" +
             "del \"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows App Protector Uninstall.lnk\" >nul 2>&1\r\n" +
             "reg delete \"HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WindowsAppProtector\" /f >nul 2>&1\r\n" +
-            "cd /d \"%ProgramFiles%\"\r\n" +
-            "rmdir /s /q \"Windows App Protector\" >nul 2>&1\r\n" +
+            "rmdir /s /q \"" + installDir + "\" >nul 2>&1\r\n" +
             "echo Windows App Protector has been removed.\r\n" +
             "pause\r\n",
             System.Text.Encoding.ASCII);
@@ -451,30 +487,31 @@ internal static class Setup
         }
     }
 
-    private static string MoveInstallDirectoryAside(string installDir)
+    private static bool TryMoveInstallDirectoryAside(string installDir, out string backupDir)
     {
+        backupDir = null;
         if (!Directory.Exists(installDir))
         {
-            return null;
+            return true;
         }
 
         string parent = Path.GetDirectoryName(installDir);
         if (string.IsNullOrEmpty(parent))
         {
-            DeleteDirectoryIfExists(installDir);
-            return null;
+            return false;
         }
 
         for (int attempt = 0; attempt < 10; attempt++)
         {
-            string backupDir = Path.Combine(
+            string candidateBackupDir = Path.Combine(
                 parent,
                 Path.GetFileName(installDir) + ".old." + Process.GetCurrentProcess().Id + "." + DateTime.UtcNow.Ticks);
 
             try
             {
-                Directory.Move(installDir, backupDir);
-                return backupDir;
+                Directory.Move(installDir, candidateBackupDir);
+                backupDir = candidateBackupDir;
+                return true;
             }
             catch
             {
@@ -484,8 +521,7 @@ internal static class Setup
             }
         }
 
-        DeleteDirectoryIfExists(installDir);
-        return null;
+        return false;
     }
 
     private static void TryDeleteDirectory(string path)
