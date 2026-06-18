@@ -37,6 +37,7 @@ public sealed class MainWindow : Window
     private const int OfnExplorer = 0x00080000;
     private const int OfnEnableSizing = 0x00800000;
     private const uint NimAdd = 0x00000000;
+    private const uint NimModify = 0x00000001;
     private const uint NimDelete = 0x00000002;
     private const uint NifMessage = 0x00000001;
     private const uint NifIcon = 0x00000002;
@@ -56,6 +57,7 @@ public sealed class MainWindow : Window
     private bool isExitRequested;
     private bool isAuthenticating;
     private bool isCheckingForUpdates;
+    private bool isAutoLockCheckRunning;
     private bool trayIconAdded;
     private IntPtr hwnd;
     private AppWindow? appWindow;
@@ -530,12 +532,17 @@ public sealed class MainWindow : Window
 
     private void AddTrayIcon()
     {
-        if (trayIconAdded)
+        EnsureTrayIcon();
+    }
+
+    private void EnsureTrayIcon()
+    {
+        var data = CreateTrayIconData();
+        if (trayIconAdded && Shell_NotifyIcon(NimModify, ref data))
         {
             return;
         }
 
-        var data = CreateTrayIconData();
         trayIconAdded = Shell_NotifyIcon(NimAdd, ref data);
     }
 
@@ -879,10 +886,24 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void WindowGuardTimer_Tick(object? sender, object e)
+    private async void WindowGuardTimer_Tick(object? sender, object e)
     {
         try
         {
+            EnsureTrayIcon();
+            if (!isAutoLockCheckRunning)
+            {
+                isAutoLockCheckRunning = true;
+                try
+                {
+                    await ViewModel.AutoLockIfIdleAsync(GetSystemIdleTime());
+                }
+                finally
+                {
+                    isAutoLockCheckRunning = false;
+                }
+            }
+
             var lockedExecutables = ViewModel.GetLockedExecutableNames();
             if (lockedExecutables.Count == 0)
             {
@@ -896,6 +917,23 @@ public sealed class MainWindow : Window
         {
             App.WriteCrashLog(ex);
         }
+    }
+
+    private static TimeSpan GetSystemIdleTime()
+    {
+        var lastInput = new LastInputInfo
+        {
+            cbSize = (uint)Marshal.SizeOf<LastInputInfo>(),
+        };
+
+        if (!GetLastInputInfo(ref lastInput))
+        {
+            return TimeSpan.Zero;
+        }
+
+        var currentTick = unchecked((uint)Environment.TickCount);
+        var idleMilliseconds = unchecked(currentTick - lastInput.dwTime);
+        return TimeSpan.FromMilliseconds(idleMilliseconds);
     }
 
     private void HideLockedAppWindows(IReadOnlySet<string> lockedExecutables)
@@ -1112,6 +1150,13 @@ public sealed class MainWindow : Window
         public IntPtr hIconSm;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private sealed class OpenFileName
     {
@@ -1190,6 +1235,9 @@ public sealed class MainWindow : Window
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo plii);
 
     [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool GetOpenFileName([In, Out] OpenFileName lpofn);

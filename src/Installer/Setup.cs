@@ -12,7 +12,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.4";
+    private const string AppVersion = "1.1.5";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
@@ -45,7 +45,7 @@ internal static class Setup
             CleanupOldProcesses();
             TryCleanupManagedIfeoRules();
             DeleteDirectoryIfExists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsAppProtector"));
-            DeleteDirectoryIfExists(installDir);
+            string oldInstallDir = MoveInstallDirectoryAside(installDir);
             Directory.CreateDirectory(installDir);
             Directory.CreateDirectory(dataDir);
             GrantUsersModify(dataDir);
@@ -55,6 +55,7 @@ internal static class Setup
             ExtractEmbeddedPayload(zipPath);
             ZipFile.ExtractToDirectory(zipPath, installDir);
             File.Delete(zipPath);
+            TryDeleteDirectory(oldInstallDir);
 
             string targetPath = Path.Combine(installDir, ExeName);
             bool createShortcuts = AskCreateShortcuts();
@@ -262,6 +263,7 @@ internal static class Setup
                 "  \"ProtectionEnabled\": false,\r\n" +
                 "  \"CloseToBackground\": true,\r\n" +
                 "  \"StartWithWindows\": false,\r\n" +
+                "  \"IdleLockMinutes\": 10,\r\n" +
                 "  \"UnlockMinutes\": 10,\r\n" +
                 "  \"UnlockUntil\": null,\r\n" +
                 "  \"AppPinSalt\": \"\",\r\n" +
@@ -443,6 +445,59 @@ internal static class Setup
                 key.SetValue("DisplayIcon", Path.Combine(installDir, ExeName));
                 key.SetValue("UninstallString", "\"" + Path.Combine(installDir, "Uninstall.bat") + "\"");
             }
+        }
+        catch
+        {
+        }
+    }
+
+    private static string MoveInstallDirectoryAside(string installDir)
+    {
+        if (!Directory.Exists(installDir))
+        {
+            return null;
+        }
+
+        string parent = Path.GetDirectoryName(installDir);
+        if (string.IsNullOrEmpty(parent))
+        {
+            DeleteDirectoryIfExists(installDir);
+            return null;
+        }
+
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            string backupDir = Path.Combine(
+                parent,
+                Path.GetFileName(installDir) + ".old." + Process.GetCurrentProcess().Id + "." + DateTime.UtcNow.Ticks);
+
+            try
+            {
+                Directory.Move(installDir, backupDir);
+                return backupDir;
+            }
+            catch
+            {
+                StopAndDeleteService();
+                CleanupOldProcesses();
+                Thread.Sleep(700);
+            }
+        }
+
+        DeleteDirectoryIfExists(installDir);
+        return null;
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, true);
         }
         catch
         {
