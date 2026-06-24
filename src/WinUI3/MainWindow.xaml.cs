@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using Windows.System;
 using WindowsAppProtector.Models;
 using WindowsAppProtector.Services;
@@ -31,6 +32,8 @@ public sealed class MainWindow : Window
     private const int SwHide = 0;
     private const int SwShow = 5;
     private const int SwRestore = 9;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const int ErrorInsufficientBuffer = 122;
     private const int OfnNoChangeDir = 0x00000008;
     private const int OfnPathMustExist = 0x00000800;
     private const int OfnFileMustExist = 0x00001000;
@@ -910,13 +913,14 @@ public sealed class MainWindow : Window
             }
 
             var lockedExecutables = ViewModel.GetLockedExecutableNames();
-            if (lockedExecutables.Count == 0)
+            var lockedPackageFamilies = ViewModel.GetLockedPackageFamilyNames();
+            if (lockedExecutables.Count == 0 && lockedPackageFamilies.Count == 0)
             {
                 RestoreHiddenProtectedWindows();
                 return;
             }
 
-            HideLockedAppWindows(lockedExecutables);
+            HideLockedAppWindows(lockedExecutables, lockedPackageFamilies);
         }
         catch (Exception ex)
         {
@@ -941,7 +945,9 @@ public sealed class MainWindow : Window
         return TimeSpan.FromMilliseconds(idleMilliseconds);
     }
 
-    private void HideLockedAppWindows(IReadOnlySet<string> lockedExecutables)
+    private void HideLockedAppWindows(
+        IReadOnlySet<string> lockedExecutables,
+        IReadOnlySet<string> lockedPackageFamilies)
     {
         var ownProcessId = Environment.ProcessId;
         EnumWindows((windowHandle, _) =>
@@ -957,17 +963,56 @@ public sealed class MainWindow : Window
                 return true;
             }
 
-            var exeName = GetProcessExecutableName(processId);
-            if (string.IsNullOrWhiteSpace(exeName) || !lockedExecutables.Contains(exeName))
+            if (!IsProtectedWindow(windowHandle, processId, lockedExecutables, lockedPackageFamilies, out var matchedName))
             {
                 return true;
             }
 
             ShowWindow(windowHandle, SwHide);
             hiddenProtectedWindows.Add(windowHandle);
-            ViewModel.StatusText = $"\uC7A0\uAE08\uB41C \uC571 \uCC3D\uC744 \uC228\uACBC\uC2B5\uB2C8\uB2E4: {exeName}";
+            ViewModel.StatusText = $"\uC7A0\uAE08\uB41C \uC571 \uCC3D\uC744 \uC228\uACBC\uC2B5\uB2C8\uB2E4: {matchedName}";
             return true;
         }, IntPtr.Zero);
+    }
+
+    private static bool IsProtectedWindow(
+        IntPtr windowHandle,
+        uint ownerProcessId,
+        IReadOnlySet<string> lockedExecutables,
+        IReadOnlySet<string> lockedPackageFamilies,
+        out string matchedName)
+    {
+        var processIds = new HashSet<uint> { ownerProcessId };
+        EnumChildWindows(windowHandle, (childWindow, _) =>
+        {
+            GetWindowThreadProcessId(childWindow, out var childProcessId);
+            if (childProcessId != 0)
+            {
+                processIds.Add(childProcessId);
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        foreach (var processId in processIds)
+        {
+            var exeName = GetProcessExecutableName(processId);
+            if (!string.IsNullOrWhiteSpace(exeName) && lockedExecutables.Contains(exeName))
+            {
+                matchedName = exeName;
+                return true;
+            }
+
+            var packageFamilyName = GetProcessPackageFamilyName(processId);
+            if (!string.IsNullOrWhiteSpace(packageFamilyName) && lockedPackageFamilies.Contains(packageFamilyName))
+            {
+                matchedName = packageFamilyName;
+                return true;
+            }
+        }
+
+        matchedName = string.Empty;
+        return false;
     }
 
     private void RestoreHiddenProtectedWindows()
@@ -1008,6 +1053,33 @@ public sealed class MainWindow : Window
         catch
         {
             return string.Empty;
+        }
+    }
+
+    private static string GetProcessPackageFamilyName(uint processId)
+    {
+        var processHandle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (processHandle == IntPtr.Zero)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            uint length = 0;
+            if (GetPackageFamilyName(processHandle, ref length, null) != ErrorInsufficientBuffer || length == 0)
+            {
+                return string.Empty;
+            }
+
+            var packageFamilyName = new StringBuilder((int)length);
+            return GetPackageFamilyName(processHandle, ref length, packageFamilyName) == 0
+                ? packageFamilyName.ToString()
+                : string.Empty;
+        }
+        finally
+        {
+            CloseHandle(processHandle);
         }
     }
 
@@ -1212,7 +1284,22 @@ public sealed class MainWindow : Window
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetPackageFamilyName(
+        IntPtr hProcess,
+        ref uint packageFamilyNameLength,
+        StringBuilder? packageFamilyName);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool Shell_NotifyIcon(uint dwMessage, ref NotifyIconData lpData);

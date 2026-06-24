@@ -139,6 +139,20 @@ public class MainViewModel : ObservableObject
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    public IReadOnlySet<string> GetLockedPackageFamilyNames()
+    {
+        if (!LockRulesActive())
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return config.ProtectedApps
+            .Where(app => app.Enabled && app.IsPackaged)
+            .Select(app => app.PackageFamilyName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task InitializeAsync()
     {
         var loaded = await settingsStore.LoadAsync();
