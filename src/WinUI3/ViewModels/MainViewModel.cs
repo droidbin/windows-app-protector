@@ -160,7 +160,10 @@ public class MainViewModel : ObservableObject
         config.CloseToBackground = loaded.CloseToBackground;
         config.StartWithWindows = loaded.StartWithWindows;
         config.IdleLockMinutes = loaded.IdleLockMinutes;
+        config.UnlockMinutes = loaded.UnlockMinutes;
         config.UnlockUntil = null;
+        config.AppPinSalt = loaded.AppPinSalt;
+        config.AppPinHash = loaded.AppPinHash;
         OnPropertyChanged(nameof(CloseToBackground));
         OnPropertyChanged(nameof(StartWithWindows));
         OnPropertyChanged(nameof(IdleLockMinutes));

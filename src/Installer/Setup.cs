@@ -12,7 +12,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.8";
+    private const string AppVersion = "1.1.9";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
