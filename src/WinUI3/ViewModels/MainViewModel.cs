@@ -484,12 +484,11 @@ public class MainViewModel : ObservableObject
         try
         {
             config.UnlockUntil = null;
-            var apps = config.ProtectedApps.Where(app => app.Enabled);
 
             config.ProtectionEnabled = LockRulesActive();
             ProtectionEnabled = config.ProtectionEnabled;
             await SaveAsync();
-            await protectionService.SyncExecutionBlockRulesAsync(apps);
+            await protectionService.SyncExecutionBlockRulesAsync(config.ProtectedApps);
         }
         catch (Exception ex)
         {
