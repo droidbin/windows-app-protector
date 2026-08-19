@@ -12,7 +12,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.10";
+    private const string AppVersion = "1.1.11";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
@@ -448,6 +448,8 @@ internal static class Setup
             "sc delete WindowsAppProtectorService >nul 2>&1\r\n" +
             "taskkill /IM WindowsAppProtector.WinUI.exe /F >nul 2>&1\r\n" +
             "taskkill /IM WindowsAppProtector.Service.exe /F >nul 2>&1\r\n" +
+            "schtasks /Delete /TN \"Windows App Protector\" /F >nul 2>&1\r\n" +
+            "reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"Windows App Protector\" /f >nul 2>&1\r\n" +
             "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$root='HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options'; Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object { $p=Get-ItemProperty $_.PsPath -ErrorAction SilentlyContinue; if ($p.WindowsAppProtectorManaged -eq '1') { Remove-Item $_.PsPath -Force -ErrorAction SilentlyContinue } }\"\r\n" +
             "rmdir /s /q \"%ProgramData%\\Windows App Protector\" >nul 2>&1\r\n" +
             "rmdir /s /q \"%AppData%\\WindowsAppProtector.WinUI\" >nul 2>&1\r\n" +

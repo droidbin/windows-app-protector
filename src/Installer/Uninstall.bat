@@ -11,6 +11,8 @@ sc stop WindowsAppProtectorService >nul 2>&1
 sc delete WindowsAppProtectorService >nul 2>&1
 taskkill /IM WindowsAppProtector.WinUI.exe /F >nul 2>&1
 taskkill /IM WindowsAppProtector.Service.exe /F >nul 2>&1
+schtasks /Delete /TN "Windows App Protector" /F >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "Windows App Protector" /f >nul 2>&1
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$root='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'; Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object { $p=Get-ItemProperty $_.PsPath -ErrorAction SilentlyContinue; if ($p.WindowsAppProtectorManaged -eq '1') { Remove-Item $_.PsPath -Force -ErrorAction SilentlyContinue } }"
 

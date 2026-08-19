@@ -17,6 +17,21 @@ public sealed class ProtectionService : IProtectionService
     private const uint TokenAdjustPrivileges = 0x0020;
     private const uint TokenQuery = 0x0008;
 
+    private static readonly HashSet<string> WindowOnlyExecutableNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "arc.exe",
+        "brave.exe",
+        "chrome.exe",
+        "firefox.exe",
+        "iexplore.exe",
+        "msedge.exe",
+        "opera.exe",
+        "opera_gx.exe",
+        "samsunginternet.exe",
+        "vivaldi.exe",
+        "whale.exe",
+    };
+
     public Task SyncExecutionBlockRulesAsync(IEnumerable<ProtectedApp> apps, CancellationToken cancellationToken = default)
     {
         if (!IsAdministrator())
@@ -34,6 +49,7 @@ public sealed class ProtectionService : IProtectionService
         var desired = allApps
             .Where(app => app.Enabled)
             .Where(app => !string.IsNullOrWhiteSpace(GetBlockRuleName(app)))
+            .Where(app => !UsesWindowOnlyBlocking(app))
             .GroupBy(GetBlockRuleName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
@@ -125,6 +141,13 @@ public sealed class ProtectionService : IProtectionService
         }
 
         return string.IsNullOrWhiteSpace(app.Path) ? string.Empty : Path.GetFileName(app.Path);
+    }
+
+    private static bool UsesWindowOnlyBlocking(ProtectedApp app)
+    {
+        var executableName = GetBlockRuleName(app);
+        return !string.IsNullOrWhiteSpace(executableName) &&
+            WindowOnlyExecutableNames.Contains(executableName);
     }
 
     private static void CleanupLegacySoftwareRestrictionRules(RegistryKey localMachine, IEnumerable<ProtectedApp> apps)

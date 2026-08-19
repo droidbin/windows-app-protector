@@ -82,6 +82,20 @@ internal sealed class ProtectionWorker : IDisposable
     private const int SePrivilegeEnabled = 0x00000002;
     private const uint TokenAdjustPrivileges = 0x0020;
     private const uint TokenQuery = 0x0008;
+    private static readonly HashSet<string> WindowOnlyExecutableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "arc.exe",
+        "brave.exe",
+        "chrome.exe",
+        "firefox.exe",
+        "iexplore.exe",
+        "msedge.exe",
+        "opera.exe",
+        "opera_gx.exe",
+        "samsunginternet.exe",
+        "vivaldi.exe",
+        "whale.exe",
+    };
     private readonly string configPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         AppName,
@@ -232,6 +246,7 @@ internal sealed class ProtectionWorker : IDisposable
         var desired = apps
             .Where(app => app.Enabled)
             .Where(app => !string.IsNullOrWhiteSpace(GetBlockRuleName(app)))
+            .Where(app => !UsesWindowOnlyBlocking(app))
             .GroupBy(app => GetBlockRuleName(app), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
@@ -299,6 +314,13 @@ internal sealed class ProtectionWorker : IDisposable
         }
 
         return Path.GetFileName(app.Path);
+    }
+
+    private static bool UsesWindowOnlyBlocking(ProtectedApp app)
+    {
+        string executableName = GetBlockRuleName(app);
+        return !string.IsNullOrWhiteSpace(executableName) &&
+            WindowOnlyExecutableNames.Contains(executableName);
     }
 
     private static void CleanupLegacySoftwareRestrictionRules(RegistryKey localMachine, IEnumerable<ProtectedApp> apps)
