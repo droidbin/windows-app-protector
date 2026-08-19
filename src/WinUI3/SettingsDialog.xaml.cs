@@ -30,6 +30,12 @@ public sealed class SettingsWindow : Window
         OnContent = "\uCF1C\uC9D0",
         OffContent = "\uAEBC\uC9D0",
     };
+    private readonly TextBox idleLockMinutesBox = new()
+    {
+        Header = "\uC720\uD734 \uC2DC \uC790\uB3D9 \uC7A0\uAE08(\uBD84)",
+        PlaceholderText = "10",
+        Width = 220,
+    };
     private readonly TextBlock summaryText = new()
     {
         TextWrapping = TextWrapping.Wrap,
@@ -123,6 +129,14 @@ public sealed class SettingsWindow : Window
         });
         panel.Children.Add(closeToBackgroundSwitch);
         panel.Children.Add(startWithWindowsSwitch);
+        panel.Children.Add(idleLockMinutesBox);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "0\uC73C\uB85C \uC124\uC815\uD558\uBA74 \uC790\uB3D9 \uC7A0\uAE08\uC744 \uC0AC\uC6A9\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.",
+            FontSize = 12,
+            Foreground = Brush(0x6B, 0x72, 0x80),
+            TextWrapping = TextWrapping.Wrap,
+        });
 
         section.Child = panel;
         return section;
@@ -155,6 +169,7 @@ public sealed class SettingsWindow : Window
     {
         closeToBackgroundSwitch.IsOn = ViewModel.CloseToBackground;
         startWithWindowsSwitch.IsOn = ViewModel.StartWithWindows;
+        idleLockMinutesBox.Text = ViewModel.IdleLockMinutes.ToString();
     }
 
     private void BuildHotkeyRows()
@@ -269,7 +284,11 @@ public sealed class SettingsWindow : Window
         RefreshHotkeyRows();
         if (ViewModel.CanSaveHotkeys)
         {
-            if (await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn, startWithWindowsSwitch.IsOn))
+            var idleLockMinutes = int.TryParse(idleLockMinutesBox.Text, out var parsedIdleLockMinutes)
+                ? parsedIdleLockMinutes
+                : ViewModel.IdleLockMinutes;
+
+            if (await ViewModel.SavePreferencesAsync(closeToBackgroundSwitch.IsOn, startWithWindowsSwitch.IsOn, idleLockMinutes))
             {
                 Close();
             }

@@ -5,6 +5,7 @@ public sealed class AppConfig
     public bool ProtectionEnabled { get; set; }
     public bool CloseToBackground { get; set; } = true;
     public bool StartWithWindows { get; set; }
+    public int IdleLockMinutes { get; set; } = 10;
     public int UnlockMinutes { get; set; } = 10;
     public string? UnlockUntil { get; set; }
     public string AppPinSalt { get; set; } = string.Empty;

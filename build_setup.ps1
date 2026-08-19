@@ -3,7 +3,22 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
-Get-Process WindowsAppProtector.WinUI -ErrorAction SilentlyContinue | Stop-Process -Force
+$candidateRoots = @(
+    (Join-Path $root "src\WinUI3\bin"),
+    (Join-Path $root "build")
+)
+
+Get-Process WindowsAppProtector.WinUI -ErrorAction SilentlyContinue | Where-Object {
+    try {
+        $processPath = $_.Path
+        $candidateRoots | Where-Object {
+            $processPath.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+    catch {
+        $false
+    }
+} | Stop-Process -Force -ErrorAction SilentlyContinue
 
 & "$root\build_winui3.bat"
 if ($LASTEXITCODE -ne 0) {

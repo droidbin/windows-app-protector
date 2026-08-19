@@ -1,8 +1,8 @@
 # Windows App Protector
 
-WinUI 3 기반 Windows 앱 실행 차단 도구입니다. 보호 목록에 등록한 `.exe` 파일을 Windows IFEO(Image File Execution Options) 규칙으로 차단합니다.
+WinUI 3 기반 Windows 앱 실행 차단 도구입니다. 보호 목록에 등록한 `.exe` 파일을 Windows IFEO(Image File Execution Options) 규칙 또는 창 감시 방식으로 차단합니다.
 
-현재 배포 버전: `1.1.4`
+현재 배포 버전: `1.1.11`
 
 ## 배포 파일
 
@@ -40,7 +40,7 @@ dist\installer\Setup.exe
 
 자동 업데이트는 GitHub Releases의 최신 릴리즈를 기준으로 동작합니다.
 
-- 릴리즈 태그는 `v1.1.4`처럼 앱 버전과 맞춥니다.
+- 릴리즈 태그는 `v1.1.9`처럼 앱 버전과 맞춥니다.
 - 릴리즈 자산에는 `Setup.exe`를 첨부하는 것을 권장합니다.
 - `Setup.exe`가 없으면 `WindowsAppProtector.zip` 안의 `Setup.exe`를 찾아 설치합니다.
 - private 저장소를 사용할 경우 `WINDOWS_APP_PROTECTOR_GITHUB_TOKEN` 환경 변수 또는 `%PROGRAMDATA%\Windows App Protector\github-token.txt`에 GitHub 토큰을 넣어야 합니다.
@@ -51,6 +51,7 @@ dist\installer\Setup.exe
 - 선택 앱 잠금/해제
 - 목록 잠금/해제
 - 앱 최초 실행 및 백그라운드 복귀 시 PIN 인증
+- 일정 시간 유휴 상태 시 보호 목록 자동 잠금
 - Windows 시작 시 자동 실행 ON/OFF
 - GitHub Releases 기반 자동 업데이트
 - 전역 단축키 등록 및 설정
@@ -77,7 +78,11 @@ dist\installer\Setup.exe
 HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
 ```
 
+Chrome, Edge, Samsung Internet 같은 브라우저는 확장 프로그램과 렌더러 프로세스도 같은 실행 파일을 사용하므로 IFEO 대신 창 감시 방식으로 잠급니다. 이 방식은 브라우저 확장 프로세스를 끊지 않으면서 잠금 상태의 브라우저 창을 숨깁니다.
+
 차단된 앱을 새로 실행하면 대상 앱을 강제 종료하지 않고 실행만 막습니다. 이미 실행 중인 앱은 유지되므로 카카오톡처럼 세션 유지가 중요한 앱을 잠갔다 풀 때 재로그인이 발생하지 않도록 설계했습니다.
+
+Windows 시작 시 자동 실행은 관리자 권한 앱이 로그인 후 안정적으로 실행되도록 `Windows App Protector` 예약 작업으로 등록합니다. 이전 버전의 HKCU Run 등록은 새 설정 저장 시 자동으로 정리됩니다.
 
 ## 보호 서비스
 
@@ -91,4 +96,4 @@ HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
 
 Windows 설정의 앱 제거 목록에서 `Windows App Protector`를 제거하거나 설치 폴더의 `uninstall.bat`을 실행하면 됩니다.
 
-제거 시 Windows Service, 관리형 IFEO 규칙, 서비스 설정, 바로가기가 함께 정리됩니다.
+제거 시 Windows Service, 시작 예약 작업, 관리형 IFEO 규칙, 서비스 설정, 바로가기가 함께 정리됩니다.

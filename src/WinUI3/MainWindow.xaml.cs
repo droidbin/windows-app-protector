@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using Windows.System;
 using WindowsAppProtector.Models;
 using WindowsAppProtector.Services;
@@ -31,12 +32,15 @@ public sealed class MainWindow : Window
     private const int SwHide = 0;
     private const int SwShow = 5;
     private const int SwRestore = 9;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const int ErrorInsufficientBuffer = 122;
     private const int OfnNoChangeDir = 0x00000008;
     private const int OfnPathMustExist = 0x00000800;
     private const int OfnFileMustExist = 0x00001000;
     private const int OfnExplorer = 0x00080000;
     private const int OfnEnableSizing = 0x00800000;
     private const uint NimAdd = 0x00000000;
+    private const uint NimModify = 0x00000001;
     private const uint NimDelete = 0x00000002;
     private const uint NifMessage = 0x00000001;
     private const uint NifIcon = 0x00000002;
@@ -56,6 +60,7 @@ public sealed class MainWindow : Window
     private bool isExitRequested;
     private bool isAuthenticating;
     private bool isCheckingForUpdates;
+    private bool isAutoLockCheckRunning;
     private bool trayIconAdded;
     private IntPtr hwnd;
     private AppWindow? appWindow;
@@ -530,12 +535,17 @@ public sealed class MainWindow : Window
 
     private void AddTrayIcon()
     {
-        if (trayIconAdded)
+        EnsureTrayIcon();
+    }
+
+    private void EnsureTrayIcon()
+    {
+        var data = CreateTrayIconData();
+        if (trayIconAdded && Shell_NotifyIcon(NimModify, ref data))
         {
             return;
         }
 
-        var data = CreateTrayIconData();
         trayIconAdded = Shell_NotifyIcon(NimAdd, ref data);
     }
 
@@ -656,7 +666,7 @@ public sealed class MainWindow : Window
         Process.Start(new ProcessStartInfo
         {
             FileName = installerPath,
-            Arguments = "--update-pid " + Environment.ProcessId,
+            Arguments = "--update-pid " + Environment.ProcessId + " --install-dir " + QuoteArgument(AppContext.BaseDirectory),
             UseShellExecute = true,
             Verb = "runas",
         });
@@ -687,6 +697,11 @@ public sealed class MainWindow : Window
         return version is null
             ? "0.0.0"
             : $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace("\"", "\\\"") + "\"";
     }
 
     private void HideToTray()
@@ -879,18 +894,33 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void WindowGuardTimer_Tick(object? sender, object e)
+    private async void WindowGuardTimer_Tick(object? sender, object e)
     {
         try
         {
+            EnsureTrayIcon();
+            if (!isAutoLockCheckRunning)
+            {
+                isAutoLockCheckRunning = true;
+                try
+                {
+                    await ViewModel.AutoLockIfIdleAsync(GetSystemIdleTime());
+                }
+                finally
+                {
+                    isAutoLockCheckRunning = false;
+                }
+            }
+
             var lockedExecutables = ViewModel.GetLockedExecutableNames();
-            if (lockedExecutables.Count == 0)
+            var lockedPackageFamilies = ViewModel.GetLockedPackageFamilyNames();
+            if (lockedExecutables.Count == 0 && lockedPackageFamilies.Count == 0)
             {
                 RestoreHiddenProtectedWindows();
                 return;
             }
 
-            HideLockedAppWindows(lockedExecutables);
+            HideLockedAppWindows(lockedExecutables, lockedPackageFamilies);
         }
         catch (Exception ex)
         {
@@ -898,7 +928,26 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void HideLockedAppWindows(IReadOnlySet<string> lockedExecutables)
+    private static TimeSpan GetSystemIdleTime()
+    {
+        var lastInput = new LastInputInfo
+        {
+            cbSize = (uint)Marshal.SizeOf<LastInputInfo>(),
+        };
+
+        if (!GetLastInputInfo(ref lastInput))
+        {
+            return TimeSpan.Zero;
+        }
+
+        var currentTick = unchecked((uint)Environment.TickCount);
+        var idleMilliseconds = unchecked(currentTick - lastInput.dwTime);
+        return TimeSpan.FromMilliseconds(idleMilliseconds);
+    }
+
+    private void HideLockedAppWindows(
+        IReadOnlySet<string> lockedExecutables,
+        IReadOnlySet<string> lockedPackageFamilies)
     {
         var ownProcessId = Environment.ProcessId;
         EnumWindows((windowHandle, _) =>
@@ -914,17 +963,56 @@ public sealed class MainWindow : Window
                 return true;
             }
 
-            var exeName = GetProcessExecutableName(processId);
-            if (string.IsNullOrWhiteSpace(exeName) || !lockedExecutables.Contains(exeName))
+            if (!IsProtectedWindow(windowHandle, processId, lockedExecutables, lockedPackageFamilies, out var matchedName))
             {
                 return true;
             }
 
             ShowWindow(windowHandle, SwHide);
             hiddenProtectedWindows.Add(windowHandle);
-            ViewModel.StatusText = $"\uC7A0\uAE08\uB41C \uC571 \uCC3D\uC744 \uC228\uACBC\uC2B5\uB2C8\uB2E4: {exeName}";
+            ViewModel.StatusText = $"\uC7A0\uAE08\uB41C \uC571 \uCC3D\uC744 \uC228\uACBC\uC2B5\uB2C8\uB2E4: {matchedName}";
             return true;
         }, IntPtr.Zero);
+    }
+
+    private static bool IsProtectedWindow(
+        IntPtr windowHandle,
+        uint ownerProcessId,
+        IReadOnlySet<string> lockedExecutables,
+        IReadOnlySet<string> lockedPackageFamilies,
+        out string matchedName)
+    {
+        var processIds = new HashSet<uint> { ownerProcessId };
+        EnumChildWindows(windowHandle, (childWindow, _) =>
+        {
+            GetWindowThreadProcessId(childWindow, out var childProcessId);
+            if (childProcessId != 0)
+            {
+                processIds.Add(childProcessId);
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        foreach (var processId in processIds)
+        {
+            var exeName = GetProcessExecutableName(processId);
+            if (!string.IsNullOrWhiteSpace(exeName) && lockedExecutables.Contains(exeName))
+            {
+                matchedName = exeName;
+                return true;
+            }
+
+            var packageFamilyName = GetProcessPackageFamilyName(processId);
+            if (!string.IsNullOrWhiteSpace(packageFamilyName) && lockedPackageFamilies.Contains(packageFamilyName))
+            {
+                matchedName = packageFamilyName;
+                return true;
+            }
+        }
+
+        matchedName = string.Empty;
+        return false;
     }
 
     private void RestoreHiddenProtectedWindows()
@@ -965,6 +1053,33 @@ public sealed class MainWindow : Window
         catch
         {
             return string.Empty;
+        }
+    }
+
+    private static string GetProcessPackageFamilyName(uint processId)
+    {
+        var processHandle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (processHandle == IntPtr.Zero)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            uint length = 0;
+            if (GetPackageFamilyName(processHandle, ref length, null) != ErrorInsufficientBuffer || length == 0)
+            {
+                return string.Empty;
+            }
+
+            var packageFamilyName = new StringBuilder((int)length);
+            return GetPackageFamilyName(processHandle, ref length, packageFamilyName) == 0
+                ? packageFamilyName.ToString()
+                : string.Empty;
+        }
+        finally
+        {
+            CloseHandle(processHandle);
         }
     }
 
@@ -1112,6 +1227,13 @@ public sealed class MainWindow : Window
         public IntPtr hIconSm;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private sealed class OpenFileName
     {
@@ -1162,7 +1284,22 @@ public sealed class MainWindow : Window
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetPackageFamilyName(
+        IntPtr hProcess,
+        ref uint packageFamilyNameLength,
+        StringBuilder? packageFamilyName);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool Shell_NotifyIcon(uint dwMessage, ref NotifyIconData lpData);
@@ -1190,6 +1327,9 @@ public sealed class MainWindow : Window
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo plii);
 
     [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool GetOpenFileName([In, Out] OpenFileName lpofn);

@@ -12,7 +12,7 @@ internal static class Setup
 {
     private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("WAPZIP01");
     private const string AppName = "Windows App Protector";
-    private const string AppVersion = "1.1.4";
+    private const string AppVersion = "1.1.11";
     private const string ExeName = "WindowsAppProtector.WinUI.exe";
     private const string ServiceExeName = "WindowsAppProtector.Service.exe";
     private const string ServiceName = "WindowsAppProtectorService";
@@ -33,9 +33,8 @@ internal static class Setup
                 return 0;
             }
 
-            string installDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                AppName);
+            string programFilesDir = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string installDir = ResolveInstallDirectory(args, programFilesDir);
             string dataDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 AppName);
@@ -45,7 +44,16 @@ internal static class Setup
             CleanupOldProcesses();
             TryCleanupManagedIfeoRules();
             DeleteDirectoryIfExists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowsAppProtector"));
-            DeleteDirectoryIfExists(installDir);
+            string oldInstallDir;
+            if (!TryMoveInstallDirectoryAside(installDir, out oldInstallDir))
+            {
+                installDir = Path.Combine(programFilesDir, AppName + " " + AppVersion);
+                if (!TryMoveInstallDirectoryAside(installDir, out oldInstallDir))
+                {
+                    throw new IOException("설치 폴더를 준비할 수 없습니다. Windows App Protector 프로세스를 종료한 뒤 다시 실행하세요.");
+                }
+            }
+
             Directory.CreateDirectory(installDir);
             Directory.CreateDirectory(dataDir);
             GrantUsersModify(dataDir);
@@ -55,6 +63,7 @@ internal static class Setup
             ExtractEmbeddedPayload(zipPath);
             ZipFile.ExtractToDirectory(zipPath, installDir);
             File.Delete(zipPath);
+            TryDeleteDirectory(oldInstallDir);
 
             string targetPath = Path.Combine(installDir, ExeName);
             bool createShortcuts = AskCreateShortcuts();
@@ -194,6 +203,35 @@ internal static class Setup
         return 0;
     }
 
+    private static string ResolveInstallDirectory(string[] args, string programFilesDir)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--install-dir=", StringComparison.OrdinalIgnoreCase))
+            {
+                return NormalizeInstallDirectory(arg.Substring("--install-dir=".Length), programFilesDir);
+            }
+
+            if (string.Equals(arg, "--install-dir", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                return NormalizeInstallDirectory(args[i + 1], programFilesDir);
+            }
+        }
+
+        return Path.Combine(programFilesDir, AppName);
+    }
+
+    private static string NormalizeInstallDirectory(string value, string programFilesDir)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Path.Combine(programFilesDir, AppName);
+        }
+
+        return Path.GetFullPath(value.Trim().Trim('"'));
+    }
+
     private static string QuoteArgument(string value)
     {
         if (string.IsNullOrEmpty(value))
@@ -262,6 +300,7 @@ internal static class Setup
                 "  \"ProtectionEnabled\": false,\r\n" +
                 "  \"CloseToBackground\": true,\r\n" +
                 "  \"StartWithWindows\": false,\r\n" +
+                "  \"IdleLockMinutes\": 10,\r\n" +
                 "  \"UnlockMinutes\": 10,\r\n" +
                 "  \"UnlockUntil\": null,\r\n" +
                 "  \"AppPinSalt\": \"\",\r\n" +
@@ -409,6 +448,8 @@ internal static class Setup
             "sc delete WindowsAppProtectorService >nul 2>&1\r\n" +
             "taskkill /IM WindowsAppProtector.WinUI.exe /F >nul 2>&1\r\n" +
             "taskkill /IM WindowsAppProtector.Service.exe /F >nul 2>&1\r\n" +
+            "schtasks /Delete /TN \"Windows App Protector\" /F >nul 2>&1\r\n" +
+            "reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"Windows App Protector\" /f >nul 2>&1\r\n" +
             "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$root='HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options'; Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object { $p=Get-ItemProperty $_.PsPath -ErrorAction SilentlyContinue; if ($p.WindowsAppProtectorManaged -eq '1') { Remove-Item $_.PsPath -Force -ErrorAction SilentlyContinue } }\"\r\n" +
             "rmdir /s /q \"%ProgramData%\\Windows App Protector\" >nul 2>&1\r\n" +
             "rmdir /s /q \"%AppData%\\WindowsAppProtector.WinUI\" >nul 2>&1\r\n" +
@@ -417,8 +458,7 @@ internal static class Setup
             "del \"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows App Protector.lnk\" >nul 2>&1\r\n" +
             "del \"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows App Protector Uninstall.lnk\" >nul 2>&1\r\n" +
             "reg delete \"HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WindowsAppProtector\" /f >nul 2>&1\r\n" +
-            "cd /d \"%ProgramFiles%\"\r\n" +
-            "rmdir /s /q \"Windows App Protector\" >nul 2>&1\r\n" +
+            "rmdir /s /q \"" + installDir + "\" >nul 2>&1\r\n" +
             "echo Windows App Protector has been removed.\r\n" +
             "pause\r\n",
             System.Text.Encoding.ASCII);
@@ -443,6 +483,59 @@ internal static class Setup
                 key.SetValue("DisplayIcon", Path.Combine(installDir, ExeName));
                 key.SetValue("UninstallString", "\"" + Path.Combine(installDir, "Uninstall.bat") + "\"");
             }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TryMoveInstallDirectoryAside(string installDir, out string backupDir)
+    {
+        backupDir = null;
+        if (!Directory.Exists(installDir))
+        {
+            return true;
+        }
+
+        string parent = Path.GetDirectoryName(installDir);
+        if (string.IsNullOrEmpty(parent))
+        {
+            return false;
+        }
+
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            string candidateBackupDir = Path.Combine(
+                parent,
+                Path.GetFileName(installDir) + ".old." + Process.GetCurrentProcess().Id + "." + DateTime.UtcNow.Ticks);
+
+            try
+            {
+                Directory.Move(installDir, candidateBackupDir);
+                backupDir = candidateBackupDir;
+                return true;
+            }
+            catch
+            {
+                StopAndDeleteService();
+                CleanupOldProcesses();
+                Thread.Sleep(700);
+            }
+        }
+
+        return false;
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, true);
         }
         catch
         {

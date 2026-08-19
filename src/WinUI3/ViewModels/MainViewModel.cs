@@ -98,6 +98,20 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    public int IdleLockMinutes
+    {
+        get => config.IdleLockMinutes;
+        set
+        {
+            var clampedValue = Math.Clamp(value, 0, 1440);
+            if (config.IdleLockMinutes != clampedValue)
+            {
+                config.IdleLockMinutes = clampedValue;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     public ObservableCollection<ProtectedAppViewModel> Apps { get; } = new();
 
     public bool HasAppPin =>
@@ -125,15 +139,34 @@ public class MainViewModel : ObservableObject
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    public IReadOnlySet<string> GetLockedPackageFamilyNames()
+    {
+        if (!LockRulesActive())
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return config.ProtectedApps
+            .Where(app => app.Enabled && app.IsPackaged)
+            .Select(app => app.PackageFamilyName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task InitializeAsync()
     {
         var loaded = await settingsStore.LoadAsync();
         config.ProtectionEnabled = loaded.ProtectionEnabled;
         config.CloseToBackground = loaded.CloseToBackground;
         config.StartWithWindows = loaded.StartWithWindows;
+        config.IdleLockMinutes = loaded.IdleLockMinutes;
+        config.UnlockMinutes = loaded.UnlockMinutes;
         config.UnlockUntil = null;
+        config.AppPinSalt = loaded.AppPinSalt;
+        config.AppPinHash = loaded.AppPinHash;
         OnPropertyChanged(nameof(CloseToBackground));
         OnPropertyChanged(nameof(StartWithWindows));
+        OnPropertyChanged(nameof(IdleLockMinutes));
         if (loaded.GlobalHotkeys.Count > 0)
         {
             foreach (var hotkey in loaded.GlobalHotkeys)
@@ -334,13 +367,14 @@ public class MainViewModel : ObservableObject
             : $"\uBAA9\uB85D \uC7A0\uAE08 \uD574\uC81C: {config.ProtectedApps.Count}\uAC1C";
     }
 
-    public async Task<bool> SavePreferencesAsync(bool closeToBackground, bool startWithWindows)
+    public async Task<bool> SavePreferencesAsync(bool closeToBackground, bool startWithWindows, int idleLockMinutes)
     {
         try
         {
             StartupService.SetEnabled(startWithWindows);
             CloseToBackground = closeToBackground;
             StartWithWindows = startWithWindows;
+            IdleLockMinutes = idleLockMinutes;
             await SaveAsync();
             StatusText = "\uC124\uC815\uC774 \uC800\uC7A5\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
             return true;
@@ -350,6 +384,28 @@ public class MainViewModel : ObservableObject
             StatusText = $"\uC2DC\uC791\uD504\uB85C\uADF8\uB7A8 \uC124\uC815\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: {ex.Message}";
             return false;
         }
+    }
+
+    public async Task<bool> AutoLockIfIdleAsync(TimeSpan idleTime)
+    {
+        if (config.IdleLockMinutes <= 0 ||
+            idleTime < TimeSpan.FromMinutes(config.IdleLockMinutes) ||
+            config.ProtectedApps.Count == 0 ||
+            config.ProtectedApps.All(app => app.Enabled))
+        {
+            return false;
+        }
+
+        foreach (var app in config.ProtectedApps)
+        {
+            app.Enabled = true;
+        }
+
+        RefreshApps();
+        await SyncProtectionRulesAsync();
+        await SaveAsync();
+        StatusText = $"\uC720\uD734 \uC0C1\uD0DC {config.IdleLockMinutes}\uBD84 \uACBD\uACFC\uB85C \uBAA9\uB85D\uC744 \uC790\uB3D9 \uC7A0\uAE08\uD588\uC2B5\uB2C8\uB2E4.";
+        return true;
     }
 
     public async Task SetAppPinAsync(string pin)
@@ -428,12 +484,11 @@ public class MainViewModel : ObservableObject
         try
         {
             config.UnlockUntil = null;
-            var apps = config.ProtectedApps.Where(app => app.Enabled);
 
             config.ProtectionEnabled = LockRulesActive();
             ProtectionEnabled = config.ProtectionEnabled;
             await SaveAsync();
-            await protectionService.SyncExecutionBlockRulesAsync(apps);
+            await protectionService.SyncExecutionBlockRulesAsync(config.ProtectedApps);
         }
         catch (Exception ex)
         {
